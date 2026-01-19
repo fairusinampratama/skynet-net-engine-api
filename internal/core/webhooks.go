@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
 	"skynet-net-engine-api/pkg/logger"
 	"time"
 	"go.uber.org/zap"
@@ -18,10 +19,13 @@ type WebhookPayload struct {
 	Timestamp string     `json:"timestamp"`
 }
 
-// SendWebhook dispatches events to a configured URL (Mocked for now)
+// SendWebhook dispatches events to a configured URL
 func SendWebhook(event string, routerID int, host string, data interface{}) {
-	// In a real app, load this from config
-	targetURL := "http://localhost:8000/api/webhooks/net-engine" // Example Laravel endpoint
+	// Load from env or default
+	targetURL := "http://localhost:8000/api/webhooks/net-engine" 
+	if url := os.Getenv("WEBHOOK_URL"); url != "" {
+		targetURL = url
+	}
 
 	payload := WebhookPayload{
 		Event:     event,
@@ -39,5 +43,11 @@ func SendWebhook(event string, routerID int, host string, data interface{}) {
 			return
 		}
 		defer resp.Body.Close()
+		
+		if resp.StatusCode >= 400 {
+			logger.Warn("Webhook server returned error", zap.Int("status", resp.StatusCode))
+		} else {
+			logger.Info("Webhook sent successfully", zap.String("event", event))
+		}
 	}()
 }

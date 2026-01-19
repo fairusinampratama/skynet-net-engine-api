@@ -1,9 +1,7 @@
 package api
 
 import (
-	"net/http"
-	"strings"
-	"io"
+
 	"github.com/gin-gonic/gin"
 	"skynet-net-engine-api/pkg/logger"
 	swaggerFiles "github.com/swaggo/files"
@@ -30,18 +28,19 @@ func Start(port string) {
 		logger.Info("API Request", 
 			logger.Field("method", c.Request.Method),
 			logger.Field("path", c.Request.URL.Path),
-			logger.Field("ip", c.ClientIP()) /* Fixed trailing comma syntax if needed, but go fmt handles it */,
+			logger.Field("ip", c.ClientIP()),
 		)
 		c.Next()
 	})
 
+
 	// API Routes (must come before NoRoute)
 	// ... (V1 routes defined below) ...
 
-    // Root handler for API health check or basic info
-    r.GET("/", func(c *gin.Context) {
-        c.JSON(200, gin.H{"message": "NetEngine API v1.0", "docs": "/api/v1/swagger/index.html"})
-    })
+	// Global 404 Handler
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(404, gin.H{"error": "Route Not Found"})
+	})
 
 	// Public V1 Routes
 	v1 := r.Group("/api/v1")

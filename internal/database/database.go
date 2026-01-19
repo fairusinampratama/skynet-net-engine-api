@@ -64,4 +64,22 @@ func Migrate() {
 			logger.Error("Failed to migrate database", zap.Error(err))
 		}
 	}
+	rows.Close() // Ensure closed before next query
+
+	// 3. Add is_isolated column
+	queryIso := "SHOW COLUMNS FROM pppoe_users LIKE 'is_isolated'"
+	rowsIso, errIso := DB.Query(queryIso)
+	if errIso != nil {
+		logger.Error("Failed to check schema for is_isolated", zap.Error(errIso))
+		return
+	}
+	defer rowsIso.Close()
+
+	if !rowsIso.Next() {
+		logger.Info("Migrating DB: Adding is_isolated to pppoe_users")
+		_, err := DB.Exec("ALTER TABLE pppoe_users ADD COLUMN is_isolated BOOLEAN DEFAULT FALSE")
+		if err != nil {
+			logger.Error("Failed to add is_isolated column", zap.Error(err))
+		}
+	}
 }

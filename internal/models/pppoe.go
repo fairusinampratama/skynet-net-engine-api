@@ -8,11 +8,14 @@ type PPPoESecret struct {
 	Disabled      bool
 }
 
-// UserWithStatus represents a user with their connection status
+// UserWithStatus represents a user with their profile and status
 type UserWithStatus struct {
 	Username string `json:"username"`
-	Status   string `json:"status"` // "connected", "isolated", or "offline"
+	Status   string `json:"status"` // "online" or "offline"
 	IP       string `json:"ip,omitempty"`
 	Uptime   string `json:"uptime,omitempty"`
 	Profile  string `json:"profile,omitempty"`
+	Enabled  bool   `json:"enabled"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
 }

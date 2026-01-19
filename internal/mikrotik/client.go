@@ -2,6 +2,8 @@ package mikrotik
 
 import (
 	"fmt"
+	"net"
+	"time"
 	"strconv"
 	"strings"
 	"skynet-net-engine-api/pkg/logger"
@@ -18,13 +20,29 @@ type Client struct {
 
 func NewClient(r models.Router) (*Client, error) {
 	address := fmt.Sprintf("%s:%d", r.Host, r.Port)
-	conn, err := routeros.Dial(address, r.Username, r.Password)
+	
+	// Custom Dialer with 15s Timeout (Fix for slow tunnels)
+	dialer := net.Dialer{Timeout: 15 * time.Second}
+	conn, err := dialer.Dial("tcp", address)
 	if err != nil {
+		return nil, err
+	}
+
+	// Create wrapper
+	c, err := routeros.NewClient(conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	// Login manually
+	if err := c.Login(r.Username, r.Password); err != nil {
+		c.Close()
 		return nil, err
 	}
 	
 	return &Client{
-		Conn: conn,
+		Conn: c,
 		Router: r,
 	}, nil
 }
@@ -131,8 +149,8 @@ func (c *Client) RemoveAddressList(ip, list string) error {
 }
 
 func (c *Client) GetActiveUsers() ([]models.ActiveUser, error) {
-	// Optimizing query to prevent buffer overflow on large responses
-	res, err := c.Conn.Run("/ppp/active/print", "=.proplist=name,address,caller-id,uptime")
+	// Optimizing query - include bytes for traffic data
+	res, err := c.Conn.Run("/ppp/active/print", "=.proplist=name,address,caller-id,uptime,limit-bytes-in,limit-bytes-out")
 	if err != nil {
 		logger.Error("Mikrotik Query Failed", zap.Error(err))
 		return nil, err
@@ -142,12 +160,18 @@ func (c *Client) GetActiveUsers() ([]models.ActiveUser, error) {
 
 	users := make([]models.ActiveUser, 0)
 	for _, re := range res.Re {
+		// Parse bytes (default to 0 if empty)
+		bytesIn, _ := strconv.ParseInt(re.Map["limit-bytes-in"], 10, 64)
+		bytesOut, _ := strconv.ParseInt(re.Map["limit-bytes-out"], 10, 64)
+		
 		users = append(users, models.ActiveUser{
 			Name:     re.Map["name"],
 			Address:  re.Map["address"],
 			CallerID: re.Map["caller-id"],
 			Uptime:   re.Map["uptime"],
 			RouterID: c.Router.ID,
+			BytesIn:  bytesIn,
+			BytesOut: bytesOut,
 		})
 	}
 	return users, nil
@@ -239,3 +263,17 @@ func (c *Client) RunBackup(name string) error {
 	return err
 }
 
+func (c *Client) RemoveActiveUser(username string) error {
+	// 1. Find Session ID
+	res, err := c.Conn.Run("/ppp/active/print", "?name="+username, "=.proplist=.id")
+	if err != nil {
+		return err
+	}
+	
+	// 2. Remove all matching sessions (usually just one)
+	for _, re := range res.Re {
+		id := re.Map[".id"]
+		c.Conn.Run("/ppp/active/remove", "=.id="+id)
+	}
+	return nil
+}
