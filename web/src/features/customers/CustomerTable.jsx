@@ -15,13 +15,13 @@ export const CustomerTable = ({ routerId = 1, onSelectUser, selectedUser }) => {
     const [processingUser, setProcessingUser] = useState(null); // Track which user is being toggled
     const [isAddUserOpen, setIsAddUserOpen] = useState(false);
 
-    const { data, error, isLoading } = useSWR(`/router/${routerId}/users`, fetcher, {
-        refreshInterval: 10000, // Faster refresh
+    const { data, error, isLoading, mutate } = useSWR(`/router/${routerId}/users`, fetcher, {
+        refreshInterval: 10000,
         revalidateOnFocus: false,
     });
 
     const handleIsolate = async (e, user) => {
-        e.stopPropagation(); // Don't select row
+        e.stopPropagation();
         if (!user.ip) {
             alert("User has no IP, cannot isolate yet.");
             return;
@@ -37,17 +37,44 @@ export const CustomerTable = ({ routerId = 1, onSelectUser, selectedUser }) => {
 
         setProcessingUser(user.username);
         try {
+            // 1. Send Async Request (Returns immediately)
             await isolateUser({
                 ip: user.ip,
                 action: action,
                 list: 'ISOLATED',
+                router_id: routerId,
                 comment: `Manual ${action} via Dashboard`
-            });
-            // Optimistic update or mutate
-            mutate(`/router/${routerId}/users`);
+            }, false); // sync = false for robust async mode
+
+            // 2. Poll for status change (Smart Polling)
+            // We'll check every 2 seconds for up to 20 seconds
+            let attempts = 0;
+            const targetStatus = action === 'add' ? 'isolated' : 'connected'; // 'connected' or 'offline' really
+
+            const pollInterval = setInterval(async () => {
+                attempts++;
+                const currentData = await mutate(); // Refresh SWR data
+                const updatedUser = currentData.find(u => u.username === user.username);
+
+                // Check if status matches expectation (or just changed from previous)
+                // Simplify: just stop if status is what we want, or if we hit max attempts
+                const isNowIsolated = updatedUser?.status === 'isolated';
+                const success = (action === 'add' && isNowIsolated) || (action === 'remove' && !isNowIsolated);
+
+                if (success || attempts >= 10) {
+                    clearInterval(pollInterval);
+                    setProcessingUser(null);
+                    if (success) {
+                        // Optional: Toast notification
+                        console.log("Status updated successfully");
+                    } else {
+                        alert("Command sent, but status update is delayed. Check back shortly.");
+                    }
+                }
+            }, 2000);
+
         } catch (err) {
-            alert("Action failed: " + err.message);
-        } finally {
+            alert("Action failed: " + (err.response?.data?.error || err.message));
             setProcessingUser(null);
         }
     };
@@ -167,6 +194,19 @@ export const CustomerTable = ({ routerId = 1, onSelectUser, selectedUser }) => {
                                     )}
                                 </div>
                             </th>
+                            <th
+                                onClick={() => handleSort('profile')}
+                                className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
+                            >
+                                <div className="flex items-center gap-1">
+                                    Profile
+                                    {sortColumn === 'profile' ? (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    ) : (
+                                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                                    )}
+                                </div>
+                            </th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                                 Actions
                             </th>
@@ -178,6 +218,8 @@ export const CustomerTable = ({ routerId = 1, onSelectUser, selectedUser }) => {
                                 <td className="px-6 py-4"><Skeleton className="h-4 w-32" /></td>
                                 <td className="px-6 py-4"><Skeleton className="h-4 w-24" /></td>
                                 <td className="px-6 py-4"><Skeleton className="h-6 w-20 rounded-full" /></td>
+                                <td className="px-6 py-4"><Skeleton className="h-6 w-16 rounded-full" /></td>
+                                <td className="px-6 py-4"><Skeleton className="h-8 w-8 rounded-lg" /></td>
                             </tr>
                         ))}
 
@@ -193,21 +235,35 @@ export const CustomerTable = ({ routerId = 1, onSelectUser, selectedUser }) => {
                                 </td>
                                 <td className="px-6 py-4 text-slate-600 font-mono text-sm">{user.ip || '-'}</td>
                                 <td className="px-6 py-4">
-                                    {user.status === 'connected' ? (
+                                    {user.status === 'online' ? (
                                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
                                             <Wifi className="w-3 h-3" />
-                                            Connected
-                                        </span>
-                                    ) : user.status === 'isolated' ? (
-                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
-                                            <Lock className="w-3 h-3" />
-                                            Isolated
+                                            Online
                                         </span>
                                     ) : (
                                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
                                             <div className="w-2 h-2 rounded-full bg-slate-400" />
                                             Offline
                                         </span>
+                                    )}
+                                </td>
+                                {/* Profile Badge Column */}
+                                <td className="px-6 py-4">
+                                    {user.profile ? (
+                                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.profile === 'isolirebilling'
+                                            ? 'bg-red-50 text-red-700 border border-red-200'
+                                            : user.profile.includes('100')
+                                                ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                                : user.profile.includes('50')
+                                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                                    : user.profile.includes('10')
+                                                        ? 'bg-cyan-50 text-cyan-700 border border-cyan-200'
+                                                        : 'bg-slate-50 text-slate-600 border border-slate-200'
+                                            }`}>
+                                            {user.profile}
+                                        </span>
+                                    ) : (
+                                        <span className="text-slate-400 text-xs">-</span>
                                     )}
                                 </td>
                                 <td className="px-6 py-4">
@@ -233,7 +289,7 @@ export const CustomerTable = ({ routerId = 1, onSelectUser, selectedUser }) => {
                         ))}
 
                         {!isLoading && sortedData.length === 0 && (
-                            <tr><td colSpan="3" className="px-6 py-8 text-center text-slate-400">No active users found.</td></tr>
+                            <tr><td colSpan="5" className="px-6 py-8 text-center text-slate-400">No active users found.</td></tr>
                         )}
                     </tbody>
                 </table>

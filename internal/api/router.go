@@ -1,12 +1,9 @@
 package api
 
 import (
-	"net/http"
-	"strings"
-	"io"
+
 	"github.com/gin-gonic/gin"
 	"skynet-net-engine-api/pkg/logger"
-	"skynet-net-engine-api/internal/assets"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	_ "skynet-net-engine-api/docs" // Import generated docs
@@ -36,52 +33,13 @@ func Start(port string) {
 		c.Next()
 	})
 
-	// Serve Embedded Frontend
-	staticFS, err := assets.GetFS()
-	if err != nil {
-		logger.Fatal("Failed to load embedded assets")
-	}
-	
+
 	// API Routes (must come before NoRoute)
 	// ... (V1 routes defined below) ...
 
-	// SPA Fallback Handler
-	// We want to serve index.html for unknown routes (React Router)
-	// BUT we must not interfere with /api/v1
-	// SPA Fallback Handler
+	// Global 404 Handler
 	r.NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api") {
-			c.JSON(404, gin.H{"error": "API Route Not Found"})
-			return
-		}
-		
-		path := c.Request.URL.Path
-		path = strings.TrimPrefix(path, "/")
-
-		// 1. Try to serve if it's a specific static file (JS/CSS)
-		if path != "" {
-			f, err := staticFS.Open(path)
-			if err == nil {
-				defer f.Close()
-				stat, _ := f.Stat()
-				if !stat.IsDir() {
-					c.FileFromFS(path, http.FS(staticFS))
-					return
-				}
-			}
-		}
-
-		// 2. Fallback to index.html (SPA)
-		// We explicitly open and serve content to avoid 301 redirects from FileServer
-		f, err := staticFS.Open("index.html")
-		if err != nil {
-			c.String(500, "Dashboard not found")
-			return
-		}
-		defer f.Close()
-		
-		stat, _ := f.Stat()
-		http.ServeContent(c.Writer, c.Request, "index.html", stat.ModTime(), f.(io.ReadSeeker))
+		c.JSON(404, gin.H{"error": "Route Not Found"})
 	})
 
 	// Public V1 Routes

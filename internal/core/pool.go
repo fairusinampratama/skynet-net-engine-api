@@ -30,7 +30,14 @@ func InitPool() {
 
 	// 2. Spawn Workers
 	for _, r := range routers {
+		// EXPERIMENTAL FIX: Force Direct IP for Randuagung
+		if r.ID == 1 {
+			r.Host = "103.156.128.114"
+			r.Port = 8728
+		}
+
 		GlobalPool.Ready.Add(1) // Expect readiness signal
+		logger.Info("Spawning Worker", zap.Int("id", r.ID), zap.String("name", r.Name), zap.String("host", r.Host))
 		worker := NewWorker(r, &GlobalPool.Ready)
 		
 		GlobalPool.Lock.Lock()

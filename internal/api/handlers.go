@@ -183,8 +183,17 @@ func IsolateUser(c *gin.Context) {
 		req.List = "ISOLATED"
 	}
 
-	workerID := 1 // MVP
+	workerID := 1 // Default MVP
+	if req.RouterID != 0 {
+		workerID = req.RouterID
+	}
 	worker := core.GlobalPool.GetWorker(workerID)
+	if worker == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Router not found"})
+		return
+	}
+	
+	isSync := c.Query("sync") == "true"
 	
 	cmd := core.Command{
 		Type: core.CmdIsolate,
@@ -194,18 +203,43 @@ func IsolateUser(c *gin.Context) {
 			"action": req.Action,
 			"comment": req.Comment,
 		},
-		Error: make(chan error),
-		Result: make(chan interface{}),
-	}
-	
-	worker.CmdChan <- cmd
-	err := <-cmd.Error
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		Error: nil,
+		Result: nil,
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "Isolation Updated", "ip": req.IP, "action": req.Action})
+	if isSync {
+		cmd.Error = make(chan error)
+		cmd.Result = make(chan interface{})
+	}
+	
+	// Send Command
+	select {
+	case worker.CmdChan <- cmd:
+		if isSync {
+			// SYNC MODE: Block and Wait
+			select {
+			case err := <-cmd.Error:
+				c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "status": "Router Connection Failed"})
+			case <-cmd.Result:
+				c.JSON(http.StatusOK, gin.H{
+					"status": "Success", 
+					"message": "User isolation updated successfully.",
+					"isolated": req.Action == "add",
+				})
+			case <-time.After(30 * time.Second):
+				c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Timeout waiting for router response"})
+			}
+		} else {
+			// ASYNC MODE: Return immediately
+			c.JSON(http.StatusAccepted, gin.H{
+				"status": "Isolate Request Queued", 
+				"message": "Command queued for execution.",
+				"mode": "async",
+			})
+		}
+	default:
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Worker queue full, please try again later"})
+	}
 }
 
 func GetTargets(c *gin.Context) {
@@ -233,8 +267,16 @@ func GetTargets(c *gin.Context) {
 func GetAllUsers(c *gin.Context) {
 	idStr := c.Param("id")
 	routerID, _ := strconv.Atoi(idStr)
+	showAll := c.Query("show_all") == "true"
 	
-	// 1. Get active sessions from worker cache (PRIMARY SOURCE)
+	// 1. Get all secrets from DB (synced from /ppp/secret for THIS router)
+	dbUsers, err := database.GetUsersByRouter(routerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch users"})
+		return
+	}
+	
+	// 2. Get active sessions from THIS ROUTER ONLY
 	worker := core.GlobalPool.GetWorker(routerID)
 	if worker == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Router not found"})
@@ -242,52 +284,57 @@ func GetAllUsers(c *gin.Context) {
 	}
 	
 	worker.Lock.RLock()
-	activeSessions := worker.ActiveUsers
+	activeUsers := worker.ActiveUsers
 	worker.Lock.RUnlock()
 	
-	// 2. Get DB users for enrichment (SECONDARY SOURCE)
-	dbUsers, _ := database.GetUsersByRouter(routerID)
-	// We ignore error here because we still want to show active users even if DB fails
+	// 3. Build a lookup map for quick online check (THIS router only)
+	activeMap := make(map[string]models.ActiveUser)
+	for _, au := range activeUsers {
+		activeMap[au.Name] = au
+	}
 	
-	// 3. Build response: Start with Active Sessions
+	// 4. Build response with online/offline status based on uptime
 	result := []models.UserWithStatus{}
 	
-	// Track who we've already added
-	addedUsers := make(map[string]bool)
-	
-	// A. Add all Active Users (Real-time from Router)
-	for _, session := range activeSessions {
-		// Try to find profile from DB, default to "unknown" or empty
-		profile := "unknown"
-		if p, exists := dbUsers[session.Name]; exists {
-			profile = p.Profile
+	for username, dbUser := range dbUsers {
+		// Check if user is in THIS router's active list
+		activeSession, isOnline := activeMap[username]
+		
+		status := "offline"
+		uptime := ""
+		ip := dbUser.RemoteAddress
+		var bytesIn, bytesOut int64
+		
+		if isOnline {
+			status = "online"
+			uptime = activeSession.Uptime
+			ip = activeSession.Address
+			bytesIn = activeSession.BytesIn
+			bytesOut = activeSession.BytesOut
+		}
+		
+		// Filter: Hide offline users by default AND hide ghosts
+		// Strategy: If user is offline AND router is Randuagung (ID=1), hide them?
+		// Better: Client side toggle.
+		// User Request: "can we filter the ghost to not shown?"
+		// Let's implement strict filtering:
+		
+		if !showAll && !isOnline && status != "isolated" {
+			// For Router 1 (Hub), the ghosts are offline customer profiles
+			// Showing 560 offline users is useless.
+			continue
 		}
 		
 		result = append(result, models.UserWithStatus{
-			Username: session.Name,
-			Status:   "connected",
-			IP:       session.Address,
-			Uptime:   session.Uptime,
-			Profile:  profile,
+			Username: username,
+			Status:   status,
+			Profile:  dbUser.Profile,
+			IP:       ip,
+			Uptime:   uptime,
+			Enabled:  dbUser.IsEnabled,
+			BytesIn:  bytesIn,
+			BytesOut: bytesOut,
 		})
-		addedUsers[session.Name] = true
-	}
-	
-	// B. Add Offline/Isolated Users from DB
-	for username, dbUser := range dbUsers {
-		if !addedUsers[username] {
-			status := "offline"
-			if !dbUser.IsEnabled {
-				status = "isolated"
-			}
-			
-			result = append(result, models.UserWithStatus{
-				Username: username,
-				Status:   status,
-				Profile:  dbUser.Profile,
-				IP:       dbUser.RemoteAddress,
-			})
-		}
 	}
 	
 	c.JSON(http.StatusOK, result)

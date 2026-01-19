@@ -15,7 +15,7 @@ api.interceptors.request.use((config) => {
 
 // API Helper Functions
 export const syncRouter = (id) => api.post(`/sync/${id}`);
-export const isolateUser = (data) => api.post(`/isolate`, data);
+export const isolateUser = (data, sync = true) => api.post(`/isolate${sync ? '?sync=true' : ''}`, data);
 export const createSecret = (data) => api.post(`/secret`, data);
 export const backupRouter = (id) => api.post(`/router/${id}/backup`);
 export const updatePlan = (user, data) => api.put(`/secret/${user}`, data);
