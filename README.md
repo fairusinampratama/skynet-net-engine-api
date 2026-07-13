@@ -83,8 +83,10 @@ Create a `.env` file (or rely on defaults/docker-compose):
 ```ini
 DB_DSN="username:password@tcp(127.0.0.1:3306)/netengine?parseTime=true"
 API_PORT=":8080"
-APP_KEY="your_secure_random_key"
+APP_KEY="<generate-a-long-random-secret>"
 ```
+
+Do not commit real router credentials, database credentials, API keys, `.env` files, exported router data, or production network details. If any real credential is committed to a public branch, rotate it immediately and purge it from Git history.
 
 ## 🖥️ Dashboard
 
@@ -116,7 +118,7 @@ Once running, access the full Swagger UI at:
 | `POST` | `/api/v1/secret` | Create PPPoE secret |
 | `POST` | `/api/v1/isolate` | Isolate/Unisolate customer |
 
-**Authentication**: All `/api/v1/*` routes require header: `X-App-Key: netengine_secret_key_123`
+**Authentication**: All `/api/v1/*` routes require the `X-App-Key` header. Use a long random value from your private environment, never a value committed to the repository.
 
 ## 🧪 Development
 
@@ -152,3 +154,7 @@ HTTP Request → Gin Router → API Handler → Worker Pool → MikroTik Router
 
 ## 📝 License
 Proprietary / Internal Use Only.
+
+## Public Portfolio Note
+
+This repository documents the backend architecture and implementation approach. Public materials should avoid exposing production router details, customer identifiers, live credentials, internal IP addresses, or operational diagrams.
