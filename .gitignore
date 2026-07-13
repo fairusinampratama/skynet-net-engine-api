@@ -23,6 +23,21 @@ go.work
 
 # Environment variables
 .env
+.env.*
+
+# Operational exports and logs
+*.log
+users.json
+*_users.json
+dump*.json
+*.csv
+*.xlsx
+*.xls
+*.sqlite
+*.db
+update.topologi*.pdf
+*topologi*.pdf
+*topology*.pdf
 
 # IDEs
 .vscode/
